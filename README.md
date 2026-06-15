@@ -2,7 +2,9 @@
 
 **Локализация робота по заранее построенной карте методом ICP: итеративное совмещение скана лидара с картой через KD-дерево и SVD. Два режима — реальное время и постфактум.**
 
-!\[Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python\&logoColor=white) !\[License](https://img.shields.io/badge/License-MIT-green.svg) !\[Mode](https://img.shields.io/badge/Mode-live%20%2F%20offline-blueviolet.svg)
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python\&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Mode](https://img.shields.io/badge/Mode-live%20%2F%20offline-blueviolet.svg)
 
 ## Описание
 
