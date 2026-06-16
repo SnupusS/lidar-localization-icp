@@ -53,9 +53,7 @@ import cv2
 from scipy.spatial import cKDTree as KDTree
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  НАСТРОЙКИ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 MAP_FILE       = "lines.bin"        # карта по умолчанию
 DATA_FILE      = "podval_1.txt"       # лог сырых данных по умолчанию (режим file)
@@ -107,28 +105,7 @@ VEL_SMOOTH       = 0.6            # сглаживание оценки скор
 IMG_SIZE       = 900
 TRAIL_LEN      = 4000              # длина траектории (точек)
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ДЕКОДЕР СЫРЫХ ДАННЫХ  (из potok_decode_fixed.py — значения сразу в мм)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Декодер полностью перенесён из potok_decode_fixed.py.
-#
-#  Ключевые особенности (НЕ сводятся к делению на 80 — деления вовсе нет,
-#  значение SCIP сразу в миллиметрах):
-#   • Декодирование начинается от БАЙТОВОГО смещения: сначала пропускаем ровно
-#     HEADER_LEN символов как raw-строку, и только потом применяем decode_3char
-#     каждые 3 символа подряд.
-#   • Одна строка лога может содержать НЕСКОЛЬКО scan response подряд → скользящее
-#     окно: найти первую валидную позицию, извлечь 1080×3=3240 символов данных,
-#     продолжить поиск с позиции сразу после конца этого блока.
-#   • Валидация СИМВОЛОВ как признак начала данных: перед декодированием все 3240
-#     символов блока должны быть в ASCII 0x30–0x6F. Если хоть один вне диапазона —
-#     это не начало данных, сдвигаемся на 1.
-#   • CC-байты блоков логгер уже вырезал на этапе записи — отдельно их НЕ удаляем,
-#     данные идут сплошным потоком 1080×3 символов без разрывов.
-# ─────────────────────────────────────────────────────────────────────────────
 
 HEADER_LEN     = 32                 # длина заголовка scan response (эмпирически)
 DATA_LEN       = STEPS * 3          # 3240 символов данных расстояний
@@ -186,9 +163,7 @@ def parse_log_file(filename: str):
     return frames
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  СКАН → ТОЧКИ (с отбрасыванием колёс и фильтрацией дальности)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 # Предрасчёт углов и маски «полезного» сектора (без колёс)
 _ANGLES = np.radians(np.linspace(ANGLE_MIN_DEG, ANGLE_MAX_DEG, STEPS).astype(np.float64))
@@ -206,13 +181,6 @@ def scan_to_xy(dist_mm) -> np.ndarray:
 
     Система сенсора: +X — вправо, +Y — вперёд (угол 0° = вперёд).
 
-    ВАЖНО (исправление зеркального отражения): X = -d·sin(a), а НЕ +d·sin(a).
-    Это соответствует корректной отрисовке исходника
-        px = cx - (dist/coef)·cos(angle)
-    (знак минус у X). При +d·sin(a) скан получается ЗЕРКАЛЬНЫМ: лево/право
-    меняются местами, а жёсткое 2D-совмещение (ICP/перебор курса) отражение
-    исправить не может — траектория восстанавливается в обратную сторону
-    (по кольцевой карте: заезд по часовой → реконструкция против часовой).
     """
     raw = np.asarray(dist_mm, dtype=np.float64)
     if raw.shape[0] != STEPS:
@@ -233,9 +201,7 @@ def scan_to_xy(dist_mm) -> np.ndarray:
     return np.column_stack([x, y]).astype(np.float64)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ЗАГРУЗКА КАРТЫ  (CloudCompare BIN v3.9)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def load_map(path: str):
     """
@@ -282,9 +248,7 @@ def load_map(path: str):
     return polylines, map_pts, kd
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ГЕОМЕТРИЯ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def rot2(th: float) -> np.ndarray:
     c, s = math.cos(th), math.sin(th)
@@ -302,9 +266,7 @@ def wrap_angle(a: float) -> float:
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ICP  (точка-точка, усечённый / робастный)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def icp_refine(scan: np.ndarray, pose0, kd: KDTree,
                max_corr=ICP_MAX_CORR, iters=ICP_ITER, trim=ICP_TRIM):
@@ -365,18 +327,11 @@ def icp_refine(scan: np.ndarray, pose0, kd: KDTree,
     return tuple(pose), float(rmse), int(n_in)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ГРУБЫЙ ПЕРЕБОР  (инициализация / восстановление по подсказке)
-# ═══════════════════════════════════════════════════════════════════════════════
+#  ГРУБЫЙ ПЕРЕБОР
 
 def coarse_search(scan: np.ndarray, center, kd: KDTree,
                   xy_radius, xy_step, heading_step_deg=INIT_HEADING_STEP_DEG):
-    """
-    Перебор поз вокруг точки center=(x,y): XY-сетка × все курсы (0..360°).
-    Оценка позы = усечённое среднее расстояний скана до карты (KD-дерево).
-    Полностью векторизован: один батч-запрос kd.query на все кандидаты.
-    Возвращает (best_pose=(x,y,theta), best_score). Позу стоит уточнить ICP.
-    """
+    """Перебор поз вокруг center: XY-сетка × курс."""
     cx, cy = center
 
     # Прорежённый скан для скорости
@@ -415,17 +370,10 @@ def coarse_search(scan: np.ndarray, center, kd: KDTree,
     return best, float(score[hi, pi])
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ЛОКАЛИЗАТОР  (без OpenCV — чистая логика, тестируема отдельно)
-# ═══════════════════════════════════════════════════════════════════════════════
+#  ЛОКАЛИЗАТОР
 
 class Localizer:
-    """
-    Состояние и логика локализации.
-      initialize(scan, center_xy) — старт по подсказке пользователя.
-      update(scan)                — один кадр трекинга; → (pose, rmse, phase).
-    Защита от телепортации: прирост позы за кадр ограничен физикой робота.
-    """
+    """Состояние и логика локализации."""
 
     def __init__(self, kd: KDTree, dt: float):
         self.kd = kd
@@ -442,7 +390,6 @@ class Localizer:
         self.max_lin = MAX_SPEED_MPS * dt * GATE_MARGIN
         self.max_ang = math.radians(MAX_YAWRATE_DPS) * dt * GATE_MARGIN
 
-    # ── Инициализация по клику пользователя ──
     def initialize(self, scan: np.ndarray, center_xy):
         pose, score = coarse_search(scan, center_xy, self.kd,
                                      INIT_XY_RADIUS_M, INIT_XY_STEP_M)
@@ -455,7 +402,6 @@ class Localizer:
         self.phase = "TRACK"
         return self.pose, self.rmse, self.phase
 
-    # ── Восстановление вокруг последней позы ──
     def _recover(self, scan: np.ndarray):
         center = (self.pose[0], self.pose[1])
         pose, score = coarse_search(scan, center, self.kd,
@@ -469,7 +415,6 @@ class Localizer:
         self.phase = "TRACK"
         return self.pose, self.rmse
 
-    # ── Защита от телепортации: ограничить прирост позы ──
     def _gate(self, prev, proposed):
         dx = proposed[0] - prev[0]
         dy = proposed[1] - prev[1]
@@ -488,7 +433,6 @@ class Localizer:
 
         return (prev[0] + dx, prev[1] + dy, wrap_angle(prev[2] + dth)), gated
 
-    # ── Один кадр трекинга ──
     def update(self, scan: np.ndarray):
         if self.phase == "INIT":
             # До явной инициализации ничего не делаем
@@ -538,16 +482,10 @@ class Localizer:
         return self.pose, self.rmse, self.phase
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ИСТОЧНИКИ КАДРОВ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class FilePlaybackSource:
-    """
-    Воспроизведение лог-файла с симуляцией реального времени.
-    Декодирует все кадры заранее, отдаёт их по одному с частотой hz.
-    Поддерживает паузу.
-    """
+    """Воспроизведение лог-файла с симуляцией реального времени."""
 
     def __init__(self, path: str, hz: float):
         self.path = path
@@ -661,15 +599,13 @@ class LiveLidarSource:
             pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ВИЗУАЛИЗАЦИЯ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 WIN = "LiDAR Localization"
 
 
 class Visualizer:
-    """Карта, скан на стенах, треугольник-лидар, траектория, кандидаты перебора."""
+    """Карта, скан, лидар-треугольник, траектория."""
 
     def __init__(self, polylines, map_pts):
         all_pts = np.vstack(polylines)
@@ -687,7 +623,6 @@ class Visualizer:
 
         self.trail = []
 
-    # ── Преобразования координат ──
     def _w2px(self, x, y):
         s = IMG_SIZE - 40
         px = int(20 + (x - self.xmin) / (self.xmax - self.xmin) * s)
@@ -700,7 +635,6 @@ class Visualizer:
         y = self.ymin + (IMG_SIZE - 20 - py) / s * (self.ymax - self.ymin)
         return float(x), float(y)
 
-    # ── Треугольник-лидар ──
     def _draw_robot(self, img, pose, color=(80, 220, 90)):
         x, y, th = pose
         cx, cy = self._w2px(x, y)
@@ -723,7 +657,6 @@ class Visualizer:
         img = self._base.copy()
         x, y, th = pose
 
-        # ── Траектория ──
         if phase in ("TRACK",):
             self.trail.append((x, y))
             if len(self.trail) > TRAIL_LEN:
@@ -732,14 +665,12 @@ class Visualizer:
             cv2.line(img, self._w2px(*self.trail[i - 1]),
                      self._w2px(*self.trail[i]), (0, 140, 200), 2, cv2.LINE_AA)
 
-        # ── Кандидаты перебора (при инициализации/восстановлении) ──
         if candidates is not None:
             for (cx_, cy_) in candidates:
                 pp = self._w2px(cx_, cy_)
                 if 0 <= pp[0] < IMG_SIZE and 0 <= pp[1] < IMG_SIZE:
                     cv2.circle(img, pp, 1, (40, 40, 200), -1)
 
-        # ── Скан в мировых координатах (точки на стенах) ──
         if scan_xy is not None and len(scan_xy):
             sw = transform_scan(scan_xy, pose)
             for pt in sw:
@@ -747,10 +678,8 @@ class Visualizer:
                 if 0 <= pp[0] < IMG_SIZE and 0 <= pp[1] < IMG_SIZE:
                     cv2.circle(img, pp, 2, (230, 230, 0), -1)
 
-        # ── Лидар-треугольник ──
         self._draw_robot(img, pose)
 
-        # ── HUD ──
         C = (210, 210, 210)
         ph_col = {"TRACK": (0, 220, 120), "INIT": (0, 180, 255),
                   "RECOVER": (0, 120, 255), "WAIT": (180, 180, 0)}.get(phase, C)
@@ -774,9 +703,7 @@ class Visualizer:
         return img
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  КЛИК ПОЛЬЗОВАТЕЛЯ — выбор стартовой точки
-# ═══════════════════════════════════════════════════════════════════════════════
+#  КЛИК ПОЛЬЗОВАТЕЛЯ
 
 class ClickPicker:
     def __init__(self):
@@ -788,10 +715,7 @@ class ClickPicker:
 
 
 def wait_for_click(vis: Visualizer):
-    """
-    Показывает карту и ждёт клик пользователя.
-    Возвращает мировые координаты (x, y) или None при выходе.
-    """
+    """Показывает карту и ждёт клик пользователя."""
     picker = ClickPicker()
     cv2.setMouseCallback(WIN, picker.cb)
 
@@ -814,9 +738,7 @@ def wait_for_click(vis: Visualizer):
             return wx, wy
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  ГЛАВНЫЙ ЦИКЛ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def run(source, vis: Visualizer, kd, dt, total):
     loc = Localizer(kd, dt)
@@ -928,7 +850,6 @@ def main():
                     help="частота подачи кадров в режиме file (Гц)")
     args = ap.parse_args()
 
-    # ── Режим ──
     if args.live:
         mode = "live"
     elif args.datafile:
@@ -936,7 +857,6 @@ def main():
     else:
         mode = choose_mode_interactive()
 
-    # ── Карта ──
     print(f"\nЗагрузка карты: {args.map}")
     polylines, map_pts, kd = load_map(args.map)
     vis = Visualizer(polylines, map_pts)
@@ -944,7 +864,6 @@ def main():
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN, IMG_SIZE, IMG_SIZE)
 
-    # ── Источник кадров ──
     source = None
     try:
         if mode == "file":
